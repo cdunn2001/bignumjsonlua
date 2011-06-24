@@ -1,0 +1,33 @@
+%{
+    // This is the grammar file for BigNumLuaJson.
+    // @author Christopher Dunn
+
+#include <string.h>
+
+    // Hooks, that are called when a rule is matched.
+    void hook(); //?
+
+%}
+
+FullJson = Json Eof
+Eof = !. {puts("Eof.")}
+Json = Value ~{puts("error\n")} {puts("top\n")}
+Value = Object | Array | Number | String | TrueValue | FalseValue | NullValue
+Object = '{}'
+Array = '[]'
+Number = < [1-9][0-9]* >
+String = '""'
+TrueValue = 'true'
+FalseValue = 'false'
+NullValue = 'null'
+
+%%
+
+int JsonParse() {
+    GREG *G = YY_ALLOC(sizeof(GREG), 0);
+    G->buflen = 0;
+
+    while (yyparse(G)) {}
+
+    return 0;
+}

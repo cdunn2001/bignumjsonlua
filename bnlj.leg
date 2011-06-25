@@ -4,22 +4,71 @@
 
 #include <string.h>
 
+    int g_eof = 0;
+    int g_lineno = 1;
+
+//#define YY_XTYPE Lua*
+//#define YY_XVAR lua
+
     // Hooks, that are called when a rule is matched.
     void hook(); //?
 
 %}
 
-FullJson = Json Eof
-Eof = !. {puts("Eof.")}
-Json = Value ~{puts("error\n")} {puts("top\n")}
-Value = Object | Array | Number | String | TrueValue | FalseValue | NullValue
-Object = '{}'
-Array = '[]'
-Number = < [1-9][0-9]* >
-String = '""'
-TrueValue = 'true'
-FalseValue = 'false'
-NullValue = 'null'
+FullJson = Json Eof ~{puts("NoEof!")} {puts("Done!")}
+Eof = !. {g_eof=1}
+Json = WS Value ~{puts("error\n")} {puts("top\n")}
+
+# Almost verbatim from http://json.org
+# Note that we allow trailing commas in Array and Object lists.
+# We also allow C++-style (//) trailing comments.
+# We do not allow the NULL UTF-8 character (the value zero) in the input,
+# as that would terminate the input. (Technically, Unicode allows it.)
+#
+Value = Object | Array | Number | String | TrueValue | FalseValue | NullValue ~{fprintf(stderr, "No matching Value at line %d.\n", g_lineno)} {puts("Value!")}
+
+Object = OpenBracket Members CloseBracket {puts("{}")}
+Members = (String Colon Value Comma?)*
+
+Array = OpenBrace Elements CloseBrace  {puts("[]")}
+Elements = (Value Comma?)*
+
+OpenBracket = '{' WS
+CloseBracket = '}' WS
+OpenBrace = '[' WS
+CloseBrace = ']' WS
+Colon = ':' WS
+Comma = ',' WS
+Number = [1-9][0-9]* WS {puts("<>")}
+String = '"' (!["] Char)* '"' WS {puts("str")}
+TrueValue = 'true' WS
+FalseValue = 'false' WS
+NullValue = 'null' WS
+
+Char =  Escape |
+        UTF8
+Escape = EscBell | EscFormfeed | EscNewline | EscReturn | EscTab | EscSlash | EscQuote | EscEsc | EscUnicode
+EscBell =      BS 'b'
+EscFormfeed =  BS 'f'
+EscNewline =   BS 'n'
+EscReturn =    BS 'r'
+EscTab =       BS 't'
+EscSlash =     BS '/'
+EscQuote =     BS ["]
+EscEsc =       BS BS
+EscUnicode =   BS 'u' HexDigit HexDigit HexDigit HexDigit
+BS = '\\'
+HexDigit = [0-9a-fA-F]
+
+UTF8 =  &{(G->buf[G->pos] & 0x80) == 0x00} . |
+        &{(G->buf[G->pos] & 0xe0) == 0xc0} .. |
+        &{(G->buf[G->pos] & 0xf0) == 0xe0} ... |
+        &{(G->buf[G->pos] & 0xf8) == 0xf0} .... |
+        &{(G->buf[G->pos] & 0xfc) == 0xf8} ..... |
+        &{(G->buf[G->pos] & 0xfe) == 0xfc} ......
+WS = (EndOfLine | ' ' | '\t' | Comment)*
+Comment = '//' ( !EndOfLine . )* EndOfLine
+EndOfLine = '\r\n' | '\n' | '\r' {++g_lineno}
 
 %%
 
@@ -27,7 +76,7 @@ int JsonParse() {
     GREG *G = YY_ALLOC(sizeof(GREG), 0);
     G->buflen = 0;
 
-    while (yyparse(G)) {}
+    int parsed = yyparse(G);
 
-    return 0;
+    return parsed && g_eof;
 }

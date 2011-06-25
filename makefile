@@ -1,3 +1,5 @@
+CFLAGS+=-DYY_DEBUG
+
 bnlj: bnlj.o
 bnlj.o: bnlj.c parser.i
 parser.i: bnlj.leg

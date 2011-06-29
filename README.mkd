@@ -33,4 +33,7 @@ language that is Lua.
 Finally, we use a PEG parser, which is recursive-descent. Lua's stack-based
 API is a perfect fit.
 
-
+## PEG (Parsing Expression Grammar)
+We use a variant of the peg/leg parser called greg, which is re-entrant.
+This version also supports failure rules (using ~{} syntax) for
+error-handling.

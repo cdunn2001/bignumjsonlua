@@ -1,23 +1,37 @@
+# -*- Mode: c-mode; indent-tabs-mode: t; -*-
+# vim: set noexpandtab:
 %{
-    // This is the grammar file for BigNumLuaJson.
-    // @author Christopher Dunn
+	// This is the grammar file for BigNumLuaJson.
+	// @author Christopher Dunn
+
 
 #include <string.h>
+#include <stdio.h>
+#include <stdarg.h> // for vargs stuff in error()
+#include <stdlib.h> // for vargs stuff in error()
+#include <lua.h>
+#include <lauxlib.h>
+#include <lualib.h>
 
     int g_eof = 0;
     int g_lineno = 1;
 
-//#define YY_XTYPE Lua*
-//#define YY_XVAR lua
+#define YY_XTYPE lua_State*
+#define YY_XVAR L
 
     // Hooks, that are called when a rule is matched.
     void hook(); //?
 
 %}
 
-FullJson = Json Eof ~{puts("NoEof!")} {puts("Done!")}
-Eof = !. {g_eof=1}
-Json = WS Value ~{puts("error\n")} {puts("top\n")}
+FullJson = WS Json Eof
+	~{puts("NoEof!")}
+	{puts("Done!")}
+Eof = !.
+	{g_eof=1}
+Json = Value
+	~{fprintf(stderr, "Error in value at line #%d\n", g_lineno)}
+	{puts("top\n")}
 
 # Almost verbatim from http://json.org
 # Note that we allow trailing commas in Array and Object lists.
@@ -25,38 +39,86 @@ Json = WS Value ~{puts("error\n")} {puts("top\n")}
 # We do not allow the NULL UTF-8 character (the value zero) in the input,
 # as that would terminate the input. (Technically, Unicode allows it.)
 #
-Value = Object | Array | Number | String | TrueValue | FalseValue | NullValue ~{fprintf(stderr, "No matching Value at line %d.\n", g_lineno)} {puts("Value!")}
+Value = (Object | Array | Number | String | TrueValue | FalseValue | NullValue)
+	~{fprintf(stderr, "No matching Value at line %d.\n", g_lineno)}
 
-Object = OpenBracket Members CloseBracket {puts("{}")}
-Members = (String Colon Value Comma?)*
+Object = OpenBracket Member* CloseBracket
+#	{puts("{}")}
+Member = Key Colon Value Comma?
+	{lua_settable(L, -3)}
 
-Array = OpenBrace Elements CloseBrace  {puts("[]")}
-Elements = (Value Comma?)*
+Array = OpenBrace Element* CloseBrace
+	{puts("[]")}
+Element = (Value Comma?)
+	{lua_rawseti(L, -2, 1+luaL_getn(L, -2))}
 
+# These can all have trailing whitespace.
+#
 OpenBracket = '{' WS
+	{lua_newtable(L)}
 CloseBracket = '}' WS
 OpenBrace = '[' WS
+	{lua_newtable(L); lua_pushnumber(L, 0); lua_rawseti(L, -2, 0)}
 CloseBrace = ']' WS
 Colon = ':' WS
 Comma = ',' WS
-Number = [1-9][0-9]* WS {puts("<>")}
-String = '"' (!["] Char)* '"' WS {puts("str")}
+Number = < [^,:{}\[\] \t\r\n]+ > WS
+	{lua_pushstring(L, G->text)}
+String = < '"' RawString '"' > WS
+	{lua_pushstring(L, G->text)}
+Key = '"' < RawString > '"' WS
+	{lua_pushstring(L, G->text)}
 TrueValue = 'true' WS
+	{lua_pushstring(L, "true")}
 FalseValue = 'false' WS
+	{lua_pushstring(L, "false")}
 NullValue = 'null' WS
+	{lua_pushstring(L, "null")}
+#
+# No more whitespace.
+
+RawString = ([^"\\] | '\\' .)*
+WS = Space*
+Space = ' ' | '\t' | EndOfLine | Comment
+Comment = '//' ( !EndOfLine . )* EndOfLine
+EndOfLine = '\r\n' | '\n' | '\r'
+	{++g_lineno}
+
+
+# Experimental stuff.
+XXNumber = < '-'? [0-9] [0-9-.+Ee]* > WS
+XNumber = < Int (Exp | Frac Exp | Frac)? > WS
+	{lua_pushstring(L, G->text)}
+XString = < '"' (!["] Char)* '"' > WS
+	{lua_pushstring(L, G->text)}
+Int = '-'? ('0' | Digits)
+Frac = '.' Digits
+Exp = E Digits
+E = ('e' | 'E') ('+' | '-')?
+Digits = [0-9]+
 
 Char =  Escape |
         UTF8
-Escape = EscBell | EscFormfeed | EscNewline | EscReturn | EscTab | EscSlash | EscQuote | EscEsc | EscUnicode
+Escape = (EscBell | EscFormfeed | EscNewline | EscReturn | EscTab | EscSlash | EscQuote | EscEsc | EscUnicode)
+	{puts("Escaped!"); $$=65}
 EscBell =      BS 'b'
+	{lua_pushlstring(L, "\b", 1)}
 EscFormfeed =  BS 'f'
+	{lua_pushlstring(L, "\f", 1)}
 EscNewline =   BS 'n'
+	{lua_pushlstring(L, "\t", 1)}
 EscReturn =    BS 'r'
+	{lua_pushlstring(L, "\r", 1)}
 EscTab =       BS 't'
+	{lua_pushlstring(L, "\t", 1)}
 EscSlash =     BS '/'
+	{lua_pushlstring(L, "/", 1)}
 EscQuote =     BS ["]
+	{lua_pushlstring(L, "\"", 1)}
 EscEsc =       BS BS
-EscUnicode =   BS 'u' HexDigit HexDigit HexDigit HexDigit
+	{lua_pushlstring(L, "\\", 1)}
+EscUnicode =   BS 'u' < HexDigit HexDigit HexDigit HexDigit >
+	{lua_pushlstring(L, G->text , 4)}
 BS = '\\'
 HexDigit = [0-9a-fA-F]
 
@@ -66,17 +128,41 @@ UTF8 =  &{(G->buf[G->pos] & 0x80) == 0x00} . |
         &{(G->buf[G->pos] & 0xf8) == 0xf0} .... |
         &{(G->buf[G->pos] & 0xfc) == 0xf8} ..... |
         &{(G->buf[G->pos] & 0xfe) == 0xfc} ......
-WS = (EndOfLine | ' ' | '\t' | Comment)*
-Comment = '//' ( !EndOfLine . )* EndOfLine
-EndOfLine = '\r\n' | '\n' | '\r' {++g_lineno}
+#
+# End experimental stuff.
+
 
 %%
 
-int JsonParse() {
+
+
+void Error (lua_State *L, const char *fmt, ...) {
+  va_list argp;
+  va_start(argp, fmt);
+  vfprintf(stderr, fmt, argp);
+  va_end(argp);
+  lua_close(L);
+  exit(EXIT_FAILURE);
+}
+
+int JsonParse()
+{
+    lua_State *L = lua_open();
+    luaL_openlibs(L);
+
     GREG *G = YY_ALLOC(sizeof(GREG), 0);
     G->buflen = 0;
+    G->data = L;
 
     int parsed = yyparse(G);
+	int success = parsed && g_eof;
 
-    return parsed && g_eof;
+	if (success) {
+		lua_setglobal(L, "json");
+		printf("In use: %d\n", lua_gc(L, LUA_GCCOUNT, 0));
+		lua_gc(L, LUA_GCCOLLECT, 0);
+		printf("In use: %d\n", lua_gc(L, LUA_GCCOUNT, 0));
+		luaL_dofile(L, "dump.lua");
+	}
+    return success;
 }

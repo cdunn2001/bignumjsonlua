@@ -3,6 +3,10 @@
 A JSON reader with support for very big numbers, implemented with the
 Lua C API.
 
+## STRICTLY EXPERIMENTAL
+This turns out to be slower than jsoncpp, though it may have some
+value for being flexible, simple, and robust.
+
 ## Rationale
 
 ### Big numbers
